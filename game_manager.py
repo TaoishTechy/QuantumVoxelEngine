@@ -27,14 +27,12 @@ class Config:
     NEAR_PLANE: float = 0.1
     FAR_PLANE: float = 500.0
     SKY_COLOR: Tuple[float, float, float, float] = (0.5, 0.7, 1.0, 1.0)
-    MESH_TIME_BUDGET_MS: float = 4.0
-    MAX_MESH_UPLOADS_PER_FRAME: int = 2
+    MESH_TIME_BUDGET_MS: float = 8.0
+    MAX_MESH_UPLOADS_PER_FRAME: int = 4
     MAX_OUTSTANDING_MESH_TASKS: int = 8
     RENDER_DISTANCE: int = 4
-    GRAVITY_MULTIPLIER: float = 1.0
-    PLAYER_MOVE_SPEED: float = 5.0
-    PLAYER_JUMP_FORCE: float = 5.0
-    MOUSE_SENSITIVITY: float = 0.005
+    PLAYER_MOVE_SPEED: float = 15.0 # Increased for better spectator flight
+    MOUSE_SENSITIVITY: float = 0.15
     TEXTURE_MAP: Dict[int, Tuple[int, int]] = {
         0: (0, 0), # Stone
         1: (1, 0), # Wood
@@ -43,7 +41,6 @@ class Config:
     UI_THEME: Dict[str, Tuple[int, int, int]] = {
         "background": (20, 30, 50),
         "foreground": (230, 240, 255),
-        "accent": (60, 100, 180)
     }
 
 # --- Logger Setup ---
@@ -97,7 +94,7 @@ def worker_build_mesh(chunk_coord: Tuple[int, int], world: 'core_world.WorldStat
     wx, wz = chunk_coord
     chunk = world.get_or_create_chunk(wx, wz)
     vertices, indices, vertex_count = [], [], 0
-
+    
     for x in range(core_world.Chunk.CHUNK_SIZE_X):
         for y in range(core_world.Chunk.CHUNK_HEIGHT):
             for z in range(core_world.Chunk.CHUNK_SIZE_Z):
@@ -105,7 +102,7 @@ def worker_build_mesh(chunk_coord: Tuple[int, int], world: 'core_world.WorldStat
                 if block_type == core_world.BlockType.AIR: continue
                 world_x, world_y, world_z = wx * 16 + x, y, wz * 16 + z
                 tex_coords = Config.TEXTURE_MAP.get(block_type, Config.DEFAULT_TEXTURE_COORDS)
-
+                
                 # Top Face (+Y)
                 if world.get_block(world_x, y + 1, world_z).type == core_world.BlockType.AIR:
                     v = [(world_x, y + 1, world_z + 1), (world_x + 1, y + 1, world_z + 1), (world_x + 1, y + 1, world_z), (world_x, y + 1, world_z)]
@@ -179,8 +176,8 @@ class Renderer:
         self.screen, self.world = screen, world
         self.width, self.height = screen.get_size()
         self.chunk_vbos: Dict[Tuple[int, int], Any] = {}
-        self.camera_pos = np.array([0.0, 85.0, 0.0])
-        self.camera_yaw, self.camera_pitch = -np.pi / 2, 0
+        self.camera_pos = np.array([0.0, 100.0, 0.0])
+        self.camera_yaw, self.camera_pitch = 0, 0
         self.shader = gpu_backend.Shader("shaders/chunk.vert", "shaders/chunk.frag")
         self.texture_atlas = self.load_texture_atlas("atlas.png")
 
@@ -212,70 +209,73 @@ class Renderer:
                     self.chunk_vbos[(cx, cz)].draw()
 
 class InputHandler:
-    def __init__(self, world, renderer):
-        self.world, self.renderer = world, renderer
-        self.player = world.entities[0] if world.entities else None
+    def __init__(self, renderer):
+        self.renderer = renderer
         pygame.mouse.set_visible(False); pygame.event.set_grab(True)
 
     def handle_input(self, dt):
-        if not self.player: return
         dx, dy = pygame.mouse.get_rel()
+        # --- FIX: Corrected mouse movement ---
         self.renderer.camera_yaw += dx * Config.MOUSE_SENSITIVITY
         self.renderer.camera_pitch -= dy * Config.MOUSE_SENSITIVITY
-        self.renderer.camera_pitch = np.clip(self.renderer.camera_pitch, -np.pi/2 + 0.01, np.pi/2 - 0.01)
+        self.renderer.camera_pitch = np.clip(self.renderer.camera_pitch, -90, 90)
+        
         keys = pygame.key.get_pressed()
-        forward = np.array([np.cos(self.renderer.camera_yaw), 0, np.sin(self.renderer.camera_yaw)])
-        right = np.array([-np.sin(self.renderer.camera_yaw), 0, np.cos(self.renderer.camera_yaw)])
+        
+        yaw_rad = np.radians(self.renderer.camera_yaw)
+        pitch_rad = np.radians(self.renderer.camera_pitch)
+        
+        # --- FIX: Corrected forward and right vectors for standard FPS controls ---
+        forward = np.array([np.cos(yaw_rad) * np.cos(pitch_rad), np.sin(pitch_rad), np.sin(yaw_rad) * np.cos(pitch_rad)])
+        right = np.array([-np.sin(yaw_rad), 0, np.cos(yaw_rad)])
+        
         move_vec = np.zeros(3)
         if keys[pygame.K_w]: move_vec += forward
         if keys[pygame.K_s]: move_vec -= forward
         if keys[pygame.K_a]: move_vec -= right
         if keys[pygame.K_d]: move_vec += right
-        if np.linalg.norm(move_vec) > 0: move_vec /= np.linalg.norm(move_vec)
-        self.player.vel[0], self.player.vel[2] = move_vec[0] * Config.PLAYER_MOVE_SPEED, move_vec[2] * Config.PLAYER_MOVE_SPEED
-        self.renderer.camera_pos = self.player.pos + np.array([0, 0.8, 0])
+        if keys[pygame.K_SPACE]: move_vec[1] += 1
+        if keys[pygame.K_LSHIFT]: move_vec[1] -= 1
+        
+        if np.linalg.norm(move_vec) > 0:
+            move_vec /= np.linalg.norm(move_vec)
+        
+        self.renderer.camera_pos += move_vec * Config.PLAYER_MOVE_SPEED * dt
 
     def handle_events(self, event):
-        if not self.player: return
-        if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE and self.player.on_ground:
-            self.player.vel[1] = Config.PLAYER_JUMP_FORCE
+        pass
 
 class GameManager:
     def __init__(self):
         logger.info("--- LAUNCHING GOD TIER QUANTUM VOXEL ENGINE ---")
         pygame.init()
-        # --- FIX: Store width and height as instance attributes ---
-        self.width = Config.SCREEN_WIDTH
-        self.height = Config.SCREEN_HEIGHT
+        self.width, self.height = Config.SCREEN_WIDTH, Config.SCREEN_HEIGHT
         self.screen = pygame.display.set_mode((self.width, self.height), pygame.OPENGL | pygame.DOUBLEBUF)
-        pygame.display.set_caption("Quantum Voxel Engine (Consolidated)")
+        pygame.display.set_caption("Quantum Voxel Engine (Spectator Mode)")
         self.clock = pygame.time.Clock()
         self.running = True
-
+        
         self.mesh_executor = concurrent.futures.ThreadPoolExecutor(thread_name_prefix='MeshWorker')
         self.mesh_priority_queue = queue.PriorityQueue()
         self.pending_uploads = []
         self.pending_uploads_lock = threading.Lock()
         self.active_mesh_tasks = set()
         self.active_mesh_tasks_lock = threading.Lock()
-
+        
         self.world = self.setup_world()
         self.renderer = Renderer(self.screen, self.world)
-        self.input_handler = InputHandler(self.world, self.renderer)
+        self.input_handler = InputHandler(self.renderer)
         self.theme_manager = ThemeManager(Config.UI_THEME)
         self.setup_opengl()
         logger.info("GameManager initialized successfully.")
 
     def setup_opengl(self):
         glClearColor(*[c/255.0 for c in Config.UI_THEME['background']], 1.0)
-        glEnable(GL_DEPTH_TEST)
-        glEnable(GL_CULL_FACE)
+        glEnable(GL_DEPTH_TEST); glEnable(GL_CULL_FACE)
 
     def setup_world(self) -> core_world.WorldState:
         world = core_world.WorldState()
         world.generator = procedural_generation.QuantumProceduralGenerator(seed=1337)
-        player = core_world.PhysicsObject(pos=[0, 80, 0], mass=60, size=(0.8, 1.8, 0.8))
-        world.add_entity(player)
         return world
 
     def update_chunks(self):
@@ -336,7 +336,6 @@ class GameManager:
                 self.process_mesh_tasks()
                 self.process_uploads()
                 self.input_handler.handle_input(dt)
-                self.world.step_simulation(dt)
                 self.draw_scene()
             except Exception as e:
                 logger.critical(f"Unhandled exception in main loop: {e}", exc_info=True)
@@ -349,8 +348,8 @@ class GameManager:
         gluPerspective(Config.FOV, self.width / self.height, Config.NEAR_PLANE, Config.FAR_PLANE)
         glMatrixMode(GL_MODELVIEW); glLoadIdentity()
         cam = self.renderer
-        glRotatef(np.degrees(cam.camera_pitch), 1, 0, 0)
-        glRotatef(np.degrees(cam.camera_yaw), 0, 1, 0)
+        glRotatef(cam.camera_pitch, 1, 0, 0)
+        glRotatef(cam.camera_yaw, 0, 1, 0)
         glTranslatef(-cam.camera_pos[0], -cam.camera_pos[1], -cam.camera_pos[2])
         self.renderer.draw_world()
         pygame.display.flip()
