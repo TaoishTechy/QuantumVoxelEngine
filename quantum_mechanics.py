@@ -1,90 +1,92 @@
 # quantum_mechanics.py
-# Contains systems for managing core quantum phenomena like entanglement,
-# superposition, and wave function collapse.
+# Implements the predictive player model for world streaming and quantum entropy caching.
 
 import numpy as np
-import random
+from typing import Dict, Tuple, List
+from collections import deque
+from logger import logger
 
-class QuantumEntanglementNetwork:
-    """A dynamic system for creating and managing complex entanglement webs."""
+class QuantumPlayerModel:
+    """
+    Models player movement as a wave function to predict future locations
+    for the chunk streaming system.
+    """
     def __init__(self):
-        self.entanglement_graph = {}
-        self.entanglement_strength = {}
+        self.position_history = deque(maxlen=30)
+        self.velocity = np.zeros(3)
 
-    def add_entanglement_pair(self, obj1, obj2):
-        """Entangles two quantum objects."""
-        strength = random.uniform(0.5, 1.0)
-        self.entanglement_graph.setdefault(obj1.id, []).append(obj2.id)
-        self.entanglement_graph.setdefault(obj2.id, []).append(obj1.id)
-        self.entanglement_strength[(obj1.id, obj2.id)] = strength
-        self.entanglement_strength[(obj2.id, obj1.id)] = strength
+    def update(self, player_pos: np.ndarray, dt: float):
+        """Updates the model with the player's current position."""
+        if len(self.position_history) > 0:
+            self.velocity = (player_pos - self.position_history[-1]) / dt
+        self.position_history.append(player_pos.copy())
 
-    def propagate_measurement_collapse(self, measured_obj, all_objects):
-        """When one object is measured, all entangled objects collapse instantly."""
-        if measured_obj.id in self.entanglement_graph:
-            for partner_id in self.entanglement_graph[measured_obj.id]:
-                partner = next((obj for obj in all_objects if obj.id == partner_id), None)
-                if partner and not partner.is_observed:
-                    partner.is_observed = True
-                    partner.pos = measured_obj.pos + np.random.normal(0, 0.1, 3)
-                    partner.vel = measured_obj.vel * 0.9
+    def get_chunk_load_probabilities(self, current_chunk: Tuple[int, int], render_distance: int) -> Dict[Tuple[int, int], float]:
+        """
+        Calculates a probability distribution for chunks to load.
+        Chunks in the direction of player movement are prioritized.
+        """
+        probabilities = {}
+        if len(self.position_history) < 2:
+            # If no movement data, load uniformly around player
+            for x in range(current_chunk[0] - render_distance, current_chunk[0] + render_distance + 1):
+                for z in range(current_chunk[1] - render_distance, current_chunk[1] + render_distance + 1):
+                    probabilities[(x, z)] = 1.0
+            return probabilities
 
-class SuperpositionField:
-    """Creates regions where quantum objects can exist in multiple states simultaneously."""
-    def __init__(self, center, radius, num_states=3):
-        self.center = np.array(center)
-        self.radius = radius
-        self.num_states = num_states
+        # Predict future position
+        predicted_pos = self.position_history[-1] + self.velocity * 0.5 # Predict 0.5s ahead
+        predicted_chunk = (int(predicted_pos[0] // 16), int(predicted_pos[2] // 16))
 
-    def apply_superposition(self, quantum_obj):
-        """Places a quantum object in a superposition of states within the field."""
-        if not quantum_obj.is_observed and np.linalg.norm(quantum_obj.pos - self.center) <= self.radius:
-            quantum_obj.ghost_positions = []
-            for i in range(self.num_states):
-                angle = (2 * np.pi * i) / self.num_states
-                offset = np.array([np.cos(angle), np.sin(angle), 0]) * self.radius * 0.3
-                quantum_obj.ghost_positions.append({'position': self.center + offset})
+        # Create a probability cloud centered on the predicted chunk
+        for x in range(current_chunk[0] - render_distance, current_chunk[0] + render_distance + 1):
+            for z in range(current_chunk[1] - render_distance, current_chunk[1] + render_distance + 1):
+                dist_sq = (x - predicted_chunk[0])**2 + (z - predicted_chunk[1])**2
+                # Use Gaussian-like falloff from predicted center
+                probability = np.exp(-dist_sq / (render_distance * 2))
+                probabilities[(x, z)] = probability
+        
+        return probabilities
 
-    def collapse_superposition(self, quantum_obj):
-        """Collapses the superposition to a single state upon measurement."""
-        if hasattr(quantum_obj, 'ghost_positions') and quantum_obj.ghost_positions:
-            chosen_state = random.choice(quantum_obj.ghost_positions)
-            quantum_obj.pos = chosen_state['position']
-            quantum_obj.ghost_positions = []
+class QuantumEntropyCache:
+    """
+    An intelligent memory management system that uses quantum entropy
+    to prioritize which chunks to keep in memory.
+    """
+    def __init__(self, max_size: int):
+        self.max_size = max_size
+        self.cache: Dict[Tuple[int, int], Dict] = {} # chunk_coord -> {'entropy': float, 'vbo': ChunkVBO}
 
-class QuantumWaveFunctionCollapse:
-    """Advanced wave function collapse system for procedural world generation."""
-    def __init__(self, grid_size=(64, 64, 64)):
-        self.grid_size = grid_size
-        self.wave_function = {}
-        self.constraints = {}
-        self.entropy_map = {}
+    def update_chunk_entropy(self, chunk_coord: Tuple[int, int], chunk: 'core_world.Chunk'):
+        """Calculates and updates the entropy for a given chunk."""
+        if chunk_coord in self.cache:
+            self.cache[chunk_coord]['entropy'] = chunk.calculate_entropy()
 
-    def initialize_superposition_grid(self, possible_blocks):
-        """Initialize every position in a superposition of all possible blocks."""
-        for x in range(self.grid_size[0]):
-            for y in range(self.grid_size[1]):
-                for z in range(self.grid_size[2]):
-                    pos = (x, y, z)
-                    self.wave_function[pos] = list(possible_blocks)
-                    self.entropy_map[pos] = len(possible_blocks)
+    def get_chunks_to_evict(self, chunks_in_view: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
+        """Determines which chunks to evict from memory based on entropy and distance."""
+        if len(self.cache) <= self.max_size:
+            return []
 
-    def collapse_lowest_entropy(self):
-        """Find the position with the lowest entropy and collapse it."""
-        min_entropy = float('inf')
-        candidates = []
-        for pos, states in self.wave_function.items():
-            if 1 < len(states) < min_entropy:
-                min_entropy = len(states)
-                candidates = [pos]
-            elif len(states) == min_entropy:
-                candidates.append(pos)
-
+        # Candidate chunks for eviction are those not in the current view
+        candidates = [coord for coord in self.cache if coord not in chunks_in_view]
+        
         if not candidates:
-            return None
+            return []
 
-        chosen_pos = random.choice(candidates)
-        chosen_state = random.choice(self.wave_function[chosen_pos])
-        self.wave_function[chosen_pos] = [chosen_state]
-        self.entropy_map[chosen_pos] = 1
-        return chosen_pos, chosen_state
+        # Sort candidates by entropy (lowest first) to evict simple chunks
+        candidates.sort(key=lambda c: self.cache[c].get('entropy', 0))
+        
+        num_to_evict = len(self.cache) - self.max_size
+        return candidates[:num_to_evict]
+
+    def add(self, chunk_coord: Tuple[int, int], vbo: 'rendering.ChunkVBO', chunk: 'core_world.Chunk'):
+        """Adds a chunk's VBO to the cache."""
+        self.cache[chunk_coord] = {
+            'vbo': vbo,
+            'entropy': chunk.calculate_entropy()
+        }
+
+    def remove(self, chunk_coord: Tuple[int, int]):
+        """Removes a chunk from the cache."""
+        if chunk_coord in self.cache:
+            del self.cache[chunk_coord]
