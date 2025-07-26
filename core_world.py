@@ -10,8 +10,8 @@ class BlockType:
     STONE = 1
     WOOD = 2
     # You can add GRASS, DIRT, etc. here and map them in game_manager.py
-    # GRASS = 3
-    # DIRT = 4
+    GRASS = 3
+    DIRT = 4
 
 class Block:
     """Represents a single voxel in the world."""
@@ -124,13 +124,14 @@ class WorldState:
 
 class PhysicsEngine:
     """Handles all physics calculations for the world."""
-    GRAVITY = np.array([0, -9.81, 0]) * settings.get('physics.gravity_multiplier', 1.0)
-    TERMINAL_VELOCITY = -50.0
+    # Base gravity is now modified by a multiplier from settings
+    GRAVITY = np.array([0, -9.81, 0]) * config.GRAVITY_MULTIPLIER
+    TERMINAL_VELOCITY = config.TERMINAL_VELOCITY
 
     def __init__(self, world_state: 'WorldState'):
         self.world = world_state
 
-    def update(self, entities: list, dt: float):
+    def update(self, entities: list, dt: float) -> None:
         """Updates all entities."""
         for entity in entities:
             if not entity.on_ground:
