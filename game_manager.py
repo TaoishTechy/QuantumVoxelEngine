@@ -9,6 +9,7 @@ import pygame
 import numpy as np
 import concurrent.futures
 from OpenGL.GL import *
+from OpenGL.GL import shaders
 from OpenGL.GLU import *
 import time
 import queue
@@ -28,10 +29,10 @@ class Config:
     FAR_PLANE: float = 500.0
     SKY_COLOR: Tuple[float, float, float, float] = (0.5, 0.7, 1.0, 1.0)
     MESH_TIME_BUDGET_MS: float = 8.0
-    MAX_MESH_UPLOADS_PER_FRAME: int = 4
+    MAX_MESH_UPLOADS_PER_FRAME: int = 5
     MAX_OUTSTANDING_MESH_TASKS: int = 8
-    RENDER_DISTANCE: int = 4
-    PLAYER_MOVE_SPEED: float = 15.0 # Increased for better spectator flight
+    RENDER_DISTANCE: int = 5
+    PLAYER_MOVE_SPEED: float = 50.0
     MOUSE_SENSITIVITY: float = 0.15
     TEXTURE_MAP: Dict[int, Tuple[int, int]] = {
         0: (0, 0), # Stone
@@ -84,17 +85,52 @@ class ThemeManager:
         except KeyError as e:
             logger.error(f"Theme palette is missing a required key: {e}")
 
+# --- GPU Backend ---
+class Shader:
+    """A wrapper for an OpenGL shader program with robust error checking."""
+    def __init__(self, vertex_path: str, fragment_path: str):
+        self.program = self.compile_shader(vertex_path, fragment_path)
+
+    def compile_shader(self, vertex_path: str, fragment_path: str) -> Optional[int]:
+        """Loads and compiles a vertex and fragment shader."""
+        try:
+            with open(vertex_path, 'r') as f:
+                vertex_src = f.read()
+            with open(fragment_path, 'r') as f:
+                fragment_src = f.read()
+
+            vertex_shader = shaders.compileShader(vertex_src, GL_VERTEX_SHADER)
+            fragment_shader = shaders.compileShader(fragment_src, GL_FRAGMENT_SHADER)
+            program = shaders.compileProgram(vertex_shader, fragment_shader)
+            return program
+        except shaders.ShaderCompilationError as e:
+            logger.critical(f"Shader compilation failed:\n{e}")
+            sys.exit(1)
+        except Exception as e:
+            logger.critical(f"An unexpected error occurred during shader compilation: {e}")
+            sys.exit(1)
+
+    def use(self):
+        """Activates the shader program."""
+        if self.program:
+            glUseProgram(self.program)
+
+    def get_uniform_location(self, name: str) -> int:
+        """Gets the location of a uniform variable in the shader."""
+        if self.program:
+            return glGetUniformLocation(self.program, name)
+        return -1
+
 # --- Module Imports (Assumed to exist in the same directory) ---
 import core_world
 import procedural_generation
-import gpu_backend
 
 # --- Meshing Worker ---
 def worker_build_mesh(chunk_coord: Tuple[int, int], world: 'core_world.WorldState') -> Tuple[Tuple[int, int], np.ndarray, np.ndarray]:
     wx, wz = chunk_coord
     chunk = world.get_or_create_chunk(wx, wz)
     vertices, indices, vertex_count = [], [], 0
-    
+
     for x in range(core_world.Chunk.CHUNK_SIZE_X):
         for y in range(core_world.Chunk.CHUNK_HEIGHT):
             for z in range(core_world.Chunk.CHUNK_SIZE_Z):
@@ -102,7 +138,7 @@ def worker_build_mesh(chunk_coord: Tuple[int, int], world: 'core_world.WorldStat
                 if block_type == core_world.BlockType.AIR: continue
                 world_x, world_y, world_z = wx * 16 + x, y, wz * 16 + z
                 tex_coords = Config.TEXTURE_MAP.get(block_type, Config.DEFAULT_TEXTURE_COORDS)
-                
+
                 # Top Face (+Y)
                 if world.get_block(world_x, y + 1, world_z).type == core_world.BlockType.AIR:
                     v = [(world_x, y + 1, world_z + 1), (world_x + 1, y + 1, world_z + 1), (world_x + 1, y + 1, world_z), (world_x, y + 1, world_z)]
@@ -178,7 +214,7 @@ class Renderer:
         self.chunk_vbos: Dict[Tuple[int, int], Any] = {}
         self.camera_pos = np.array([0.0, 100.0, 0.0])
         self.camera_yaw, self.camera_pitch = 0, 0
-        self.shader = gpu_backend.Shader("shaders/chunk.vert", "shaders/chunk.frag")
+        self.shader = Shader("shaders/chunk.vert", "shaders/chunk.frag")
         self.texture_atlas = self.load_texture_atlas("atlas.png")
 
     def load_texture_atlas(self, path):
@@ -215,31 +251,29 @@ class InputHandler:
 
     def handle_input(self, dt):
         dx, dy = pygame.mouse.get_rel()
-        # --- FIX: Corrected mouse movement ---
         self.renderer.camera_yaw += dx * Config.MOUSE_SENSITIVITY
         self.renderer.camera_pitch -= dy * Config.MOUSE_SENSITIVITY
         self.renderer.camera_pitch = np.clip(self.renderer.camera_pitch, -90, 90)
-        
+
         keys = pygame.key.get_pressed()
-        
+
         yaw_rad = np.radians(self.renderer.camera_yaw)
         pitch_rad = np.radians(self.renderer.camera_pitch)
-        
-        # --- FIX: Corrected forward and right vectors for standard FPS controls ---
+
         forward = np.array([np.cos(yaw_rad) * np.cos(pitch_rad), np.sin(pitch_rad), np.sin(yaw_rad) * np.cos(pitch_rad)])
         right = np.array([-np.sin(yaw_rad), 0, np.cos(yaw_rad)])
-        
+
         move_vec = np.zeros(3)
-        if keys[pygame.K_w]: move_vec += forward
-        if keys[pygame.K_s]: move_vec -= forward
-        if keys[pygame.K_a]: move_vec -= right
-        if keys[pygame.K_d]: move_vec += right
+        if keys[pygame.K_w]: move_vec -= right
+        if keys[pygame.K_s]: move_vec += right
+        if keys[pygame.K_a]: move_vec += forward
+        if keys[pygame.K_d]: move_vec -= forward
         if keys[pygame.K_SPACE]: move_vec[1] += 1
         if keys[pygame.K_LSHIFT]: move_vec[1] -= 1
-        
+
         if np.linalg.norm(move_vec) > 0:
             move_vec /= np.linalg.norm(move_vec)
-        
+
         self.renderer.camera_pos += move_vec * Config.PLAYER_MOVE_SPEED * dt
 
     def handle_events(self, event):
@@ -254,14 +288,14 @@ class GameManager:
         pygame.display.set_caption("Quantum Voxel Engine (Spectator Mode)")
         self.clock = pygame.time.Clock()
         self.running = True
-        
+
         self.mesh_executor = concurrent.futures.ThreadPoolExecutor(thread_name_prefix='MeshWorker')
         self.mesh_priority_queue = queue.PriorityQueue()
         self.pending_uploads = []
         self.pending_uploads_lock = threading.Lock()
         self.active_mesh_tasks = set()
         self.active_mesh_tasks_lock = threading.Lock()
-        
+
         self.world = self.setup_world()
         self.renderer = Renderer(self.screen, self.world)
         self.input_handler = InputHandler(self.renderer)
