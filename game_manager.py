@@ -31,6 +31,10 @@ MAX_OUTSTANDING_MESH_TASKS = 8 # Limit concurrent mesh builds
 
 # --- Thread-Safe Worker Function for VBO Mesh Building ---
 def worker_build_mesh(chunk_coord, world, texture_map):
+    """
+    (THREAD-SAFE) Constructs the mesh for a single chunk.
+    This function is designed to be run in a separate thread.
+    """
     wx, wz = chunk_coord
     chunk = world.get_or_create_chunk(wx, wz)
 
@@ -51,32 +55,32 @@ def worker_build_mesh(chunk_coord, world, texture_map):
                 # --- FIX: Use world coordinates for all vertices and correct winding order ---
                 # Top Face (+Y)
                 if world.get_block(world_x, world_y + 1, world_z).type == core_world.BlockType.AIR:
-                    v = [(world_x, world_y + 1, world_z), (world_x + 1, world_y + 1, world_z), (world_x + 1, world_y + 1, world_z + 1), (world_x, world_y + 1, world_z + 1)]
+                    v = [(world_x, y + 1, world_z), (world_x + 1, y + 1, world_z), (world_x + 1, y + 1, world_z + 1), (world_x, y + 1, world_z + 1)]
                     new_verts, new_indices = create_face_data(v, tex_coords, vertex_count)
                     vertices.extend(new_verts); indices.extend(new_indices); vertex_count += 4
-                # Bottom Face (-Y) - Corrected Winding
+                # Bottom Face (-Y)
                 if world.get_block(world_x, world_y - 1, world_z).type == core_world.BlockType.AIR:
-                    v = [(world_x, world_y, world_z), (world_x + 1, world_y, world_z), (world_x + 1, world_y, world_z + 1), (world_x, world_y, world_z + 1)]
+                    v = [(world_x, y, world_z), (world_x + 1, y, world_z), (world_x + 1, y, world_z + 1), (world_x, y, world_z + 1)]
                     new_verts, new_indices = create_face_data(v, tex_coords, vertex_count)
                     vertices.extend(new_verts); indices.extend(new_indices); vertex_count += 4
                 # Right Face (+X)
                 if world.get_block(world_x + 1, world_y, world_z).type == core_world.BlockType.AIR:
-                    v = [(world_x + 1, world_y, world_z), (world_x + 1, world_y + 1, world_z), (world_x + 1, world_y + 1, world_z + 1), (world_x + 1, world_y, world_z + 1)]
+                    v = [(world_x + 1, y, z), (world_x + 1, y + 1, z), (world_x + 1, y + 1, z + 1), (world_x + 1, y, z + 1)]
                     new_verts, new_indices = create_face_data(v, tex_coords, vertex_count)
                     vertices.extend(new_verts); indices.extend(new_indices); vertex_count += 4
                 # Left Face (-X)
                 if world.get_block(world_x - 1, world_y, world_z).type == core_world.BlockType.AIR:
-                    v = [(world_x, world_y, world_z + 1), (world_x, world_y + 1, world_z + 1), (world_x, world_y + 1, world_z), (world_x, world_y, world_z)]
+                    v = [(world_x, y, z + 1), (world_x, y + 1, z + 1), (world_x, y + 1, z), (world_x, y, z)]
                     new_verts, new_indices = create_face_data(v, tex_coords, vertex_count)
                     vertices.extend(new_verts); indices.extend(new_indices); vertex_count += 4
                 # Front Face (+Z)
                 if world.get_block(world_x, world_y, world_z + 1).type == core_world.BlockType.AIR:
-                    v = [(world_x + 1, world_y, world_z + 1), (world_x + 1, world_y + 1, world_z + 1), (world_x, world_y + 1, world_z + 1), (world_x, world_y, world_z + 1)]
+                    v = [(world_x + 1, y, z + 1), (world_x + 1, y + 1, z + 1), (world_x, y + 1, z + 1), (world_x, y, z + 1)]
                     new_verts, new_indices = create_face_data(v, tex_coords, vertex_count)
                     vertices.extend(new_verts); indices.extend(new_indices); vertex_count += 4
                 # Back Face (-Z)
                 if world.get_block(world_x, world_y, world_z - 1).type == core_world.BlockType.AIR:
-                    v = [(world_x, world_y, world_z), (world_x, world_y + 1, world_z), (world_x + 1, world_y + 1, world_z), (world_x + 1, world_y, world_z)]
+                    v = [(world_x, y, z), (world_x, y + 1, z), (world_x + 1, y + 1, z), (world_x + 1, y, z)]
                     new_verts, new_indices = create_face_data(v, tex_coords, vertex_count)
                     vertices.extend(new_verts); indices.extend(new_indices); vertex_count += 4
 
@@ -111,15 +115,11 @@ class ChunkVBO:
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ibo)
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, index_data.nbytes, index_data, GL_STATIC_DRAW)
 
-        # Stride is now 28 bytes: 3 pos, 2 uv, 2 atlas_uv (7 floats * 4 bytes)
         stride = 28
-        # Position (3 floats)
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(0))
         glEnableVertexAttribArray(0)
-        # Local UV Coords (2 floats)
         glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(12))
         glEnableVertexAttribArray(1)
-        # Atlas Offset Coords (2 floats)
         glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(20))
         glEnableVertexAttribArray(2)
 
@@ -193,7 +193,6 @@ class InputHandler:
         self.renderer.camera_pitch = np.clip(self.renderer.camera_pitch, -np.pi/2 + 0.01, np.pi/2 - 0.01)
 
         keys = pygame.key.get_pressed()
-
         forward = np.array([np.cos(self.renderer.camera_yaw), 0, np.sin(self.renderer.camera_yaw)])
         right = np.array([-np.sin(self.renderer.camera_yaw), 0, np.cos(self.renderer.camera_yaw)])
 
@@ -215,7 +214,6 @@ class InputHandler:
 
 class GameManager:
     def __init__(self):
-        print("--- LAUNCHING GOD TIER QUANTUM VOXEL GAME ---")
         pygame.init()
         self.width, self.height = 1280, 720
         self.screen = pygame.display.set_mode((self.width, self.height), pygame.OPENGL | pygame.DOUBLEBUF)
@@ -231,21 +229,31 @@ class GameManager:
         self.renderer = Renderer(self.screen, self.world, self)
         self.input_handler = InputHandler(self.world, self.renderer)
         self.setup_opengl()
-        print("INFO: GameManager initialized successfully.")
 
     def setup_opengl(self):
         glClearColor(*self.renderer.sky_color)
         glEnable(GL_DEPTH_TEST)
         glEnable(GL_CULL_FACE)
-        print("INFO: OpenGL context configured.")
 
     def setup_world(self):
-        print("INFO: Setting up world...")
         world = core_world.WorldState()
         world.generator = procedural_generation.QuantumProceduralGenerator(seed=1337)
-        player = core_world.PhysicsObject(pos=[0, 80, 0], mass=60, size=(0.8, 1.8, 0.8))
+
+        # Pre-generate spawn chunks
+        for x in range(-2, 3):
+            for z in range(-2, 3):
+                world.get_or_create_chunk(x, z)
+
+        # Find a safe spawn height
+        ground_height = 0
+        for y in range(core_world.Chunk.CHUNK_HEIGHT - 1, -1, -1):
+            if world.get_block(0, y, 0).type != core_world.BlockType.AIR:
+                ground_height = y
+                break
+
+        spawn_pos = [0, ground_height + 5.0, 0] # Start higher up
+        player = core_world.PhysicsObject(pos=spawn_pos, mass=60, size=(0.8, 1.8, 0.8))
         world.add_entity(player)
-        print("INFO: World setup complete.")
         return world
 
     def update_chunks(self):
@@ -292,7 +300,6 @@ class GameManager:
             uploads_this_frame += 1
 
     def run(self):
-        print("INFO: Starting main game loop...")
         frame_count = 0
         while self.running:
             dt = self.clock.tick(60) / 1000.0
@@ -305,16 +312,10 @@ class GameManager:
             self.world.step_simulation(dt)
             self.draw_scene()
 
-            if frame_count % 120 == 0: # Print every 2 seconds
+            if frame_count % 120 == 0:
                 player = self.input_handler.player
-                print(f"--- STATUS UPDATE ---")
-                print(f"  FPS: {self.clock.get_fps():.1f}")
-                print(f"  Player Pos: ({player.pos[0]:.1f}, {player.pos[1]:.1f}, {player.pos[2]:.1f})")
-                print(f"  Chunks Managed: {len(self.renderer.chunk_vbos)}")
-                print(f"  Mesh Queue: {self.mesh_priority_queue.qsize()} | Pending Uploads: {len(self.pending_uploads)}")
-                print(f"  Active Threads: {len(self.mesh_executor._threads)}")
-                print(f"---------------------")
-
+                print(f"FPS: {self.clock.get_fps():.1f} | Pos: ({player.pos[0]:.1f}, {player.pos[1]:.1f}, {player.pos[2]:.1f}) | "
+                      f"Chunks: {len(self.renderer.chunk_vbos)} | Pending: {len(self.pending_uploads)}")
 
     def draw_scene(self):
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
@@ -338,7 +339,6 @@ class GameManager:
             self.input_handler.handle_events(event)
 
     def shutdown(self):
-        print("INFO: Shutting down...")
         self.mesh_executor.shutdown(wait=True)
         pygame.quit()
         sys.exit()
