@@ -5,7 +5,7 @@
 import numpy as np
 import random
 from typing import List, Dict, Any
-from settings import settings
+import config
 
 class MultiScalePhysicsEngine:
     """Orchestrates different physics engines based on object scale and properties."""
@@ -30,10 +30,12 @@ class MultiScalePhysicsEngine:
 
         # --- FEATURE: Call placeholder update stubs ---
         if self.physics_layers['molecular']:
+            # TODO: Implement molecular physics update
             # molecular_objects = [o for o in objects if self.classify(o) == 'molecular']
             # self.physics_layers['molecular'].update(molecular_objects, dt)
             pass
         if self.physics_layers['quantum']:
+            # TODO: Implement quantum physics update
             # quantum_objects = [o for o in objects if self.classify(o) == 'quantum']
             # self.physics_layers['quantum'].update(quantum_objects, dt)
             pass
