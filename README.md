@@ -2,6 +2,10 @@
 
 A high-performance, multi-threaded voxel engine written in Python, using Pygame for windowing and PyOpenGL for rendering. This engine goes beyond traditional voxel frameworks by incorporating **quantum physics simulation**, **AGI emergence mechanics**, and **consciousness-aware gameplay systems**.
 
+<img width="1066" height="420" alt="image" src="https://github.com/user-attachments/assets/994bad91-721f-4b1b-93ee-2ba29772ad0f" />
+
+<img width="1079" height="420" alt="image" src="https://github.com/user-attachments/assets/43824e39-285c-4d4a-be3e-31a6138f7f55" />
+
 ---
 
 ## 🚀 Core Features
