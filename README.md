@@ -4,7 +4,8 @@ A high-performance, multi-threaded voxel engine written in Python, using Pygame 
 
 <img width="1066" height="420" alt="image" src="https://github.com/user-attachments/assets/994bad91-721f-4b1b-93ee-2ba29772ad0f" />
 
-<img width="1079" height="420" alt="image" src="https://github.com/user-attachments/assets/43824e39-285c-4d4a-be3e-31a6138f7f55" />
+<img width="1269" height="420" alt="image" src="https://github.com/user-attachments/assets/9412e204-7809-454b-a85d-04f660a80c09" />
+
 
 ---
 
