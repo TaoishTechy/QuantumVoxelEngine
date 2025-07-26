@@ -4,9 +4,9 @@
 
 import pygame
 from OpenGL.GL import *
-from OpenGL.GL import shaders # FIX: Added missing 'shaders' import
+from OpenGL.GL import shaders
 import numpy as np
-import ctypes # FIX: Added missing 'ctypes' import
+import ctypes
 
 # --- Engine Imports ---
 import config
@@ -108,7 +108,7 @@ class Renderer:
         self.player_position_provider = lambda: [0, 0, 0]
 
         self.chunk_meshes = {}
-        self.wireframe_mode = False # Add a flag for wireframe mode
+        self.wireframe_mode = False
 
         # --- Shaders ---
         vertex_shader_source = """
@@ -207,41 +207,54 @@ class Renderer:
             core_world.BlockType.DIRT: [0.6, 0.4, 0.2],
             core_world.BlockType.STONE: [0.5, 0.5, 0.5],
             core_world.BlockType.WOOD: [0.7, 0.5, 0.3],
+            core_world.BlockType.LAVA: [1.0, 0.5, 0.0],
+            core_world.BlockType.WATER: [0.2, 0.5, 1.0],
+            core_world.BlockType.OBSIDIAN: [0.1, 0.1, 0.2],
+            core_world.BlockType.SAND: [0.9, 0.9, 0.7],
         }
 
-        for x in range(chunk.CHUNK_SIZE_X):
-            for y in range(chunk.CHUNK_HEIGHT):
-                for z in range(chunk.CHUNK_SIZE_Z):
-                    block_type = chunk.blocks[x, y, z]
+        for x_local in range(chunk.CHUNK_SIZE_X):
+            for y_local in range(chunk.CHUNK_HEIGHT):
+                for z_local in range(chunk.CHUNK_SIZE_Z):
+                    block_type = chunk.blocks[x_local, y_local, z_local]
                     if block_type == core_world.BlockType.AIR:
                         continue
 
                     color = colors.get(block_type, [1, 0, 1])
 
+                    # Check each face for visibility
                     # Top (+Y)
-                    if y == chunk.CHUNK_HEIGHT - 1 or chunk.blocks[x, y + 1, z] == core_world.BlockType.AIR:
-                        vertices.extend([x, y + 1, z, *color, x + 1, y + 1, z, *color, x + 1, y + 1, z + 1, *color])
-                        vertices.extend([x, y + 1, z, *color, x + 1, y + 1, z + 1, *color, x, y + 1, z + 1, *color])
+                    if y_local == chunk.CHUNK_HEIGHT - 1 or chunk.blocks[x_local, y_local + 1, z_local] == core_world.BlockType.AIR:
+                        v1, v2, v3, v4 = [x_local, y_local + 1, z_local], [x_local + 1, y_local + 1, z_local], [x_local + 1, y_local + 1, z_local + 1], [x_local, y_local + 1, z_local + 1]
+                        vertices.extend([*v1, *color, *v3, *color, *v2, *color])
+                        vertices.extend([*v1, *color, *v4, *color, *v3, *color])
                     # Bottom (-Y)
-                    if y == 0 or chunk.blocks[x, y - 1, z] == core_world.BlockType.AIR:
-                        vertices.extend([x, y, z, *color, x + 1, y, z + 1, *color, x + 1, y, z, *color])
-                        vertices.extend([x, y, z, *color, x, y, z + 1, *color, x + 1, y, z + 1, *color])
+                    if y_local == 0 or chunk.blocks[x_local, y_local - 1, z_local] == core_world.BlockType.AIR:
+                        v1, v2, v3, v4 = [x_local, y_local, z_local], [x_local + 1, y_local, z_local], [x_local + 1, y_local, z_local + 1], [x_local, y_local, z_local + 1]
+                        vertices.extend([*v1, *color, *v2, *color, *v3, *color])
+                        vertices.extend([*v1, *color, *v3, *color, *v4, *color])
                     # Right (+X)
-                    if x == chunk.CHUNK_SIZE_X - 1 or chunk.blocks[x + 1, y, z] == core_world.BlockType.AIR:
-                        vertices.extend([x + 1, y, z, *color, x + 1, y + 1, z, *color, x + 1, y + 1, z + 1, *color])
-                        vertices.extend([x + 1, y, z, *color, x + 1, y + 1, z + 1, *color, x + 1, y, z + 1, *color])
+                    if x_local == chunk.CHUNK_SIZE_X - 1 or chunk.blocks[x_local + 1, y_local, z_local] == core_world.BlockType.AIR:
+                        v1, v2, v3, v4 = [x_local + 1, y_local, z_local], [x_local + 1, y_local, z_local + 1], [x_local + 1, y_local + 1, z_local + 1], [x_local + 1, y_local + 1, z_local]
+                        # FIX: Reversed winding order to match other faces.
+                        vertices.extend([*v1, *color, *v3, *color, *v2, *color])
+                        vertices.extend([*v1, *color, *v4, *color, *v3, *color])
                     # Left (-X)
-                    if x == 0 or chunk.blocks[x - 1, y, z] == core_world.BlockType.AIR:
-                        vertices.extend([x, y, z, *color, x, y, z + 1, *color, x, y + 1, z + 1, *color])
-                        vertices.extend([x, y, z, *color, x, y + 1, z + 1, *color, x, y + 1, z, *color])
+                    if x_local == 0 or chunk.blocks[x_local - 1, y_local, z_local] == core_world.BlockType.AIR:
+                        v1, v2, v3, v4 = [x_local, y_local, z_local], [x_local, y_local, z_local + 1], [x_local, y_local + 1, z_local + 1], [x_local, y_local + 1, z_local]
+                        vertices.extend([*v1, *color, *v2, *color, *v3, *color])
+                        vertices.extend([*v1, *color, *v3, *color, *v4, *color])
                     # Front (+Z)
-                    if z == chunk.CHUNK_SIZE_Z - 1 or chunk.blocks[x, y, z + 1] == core_world.BlockType.AIR:
-                        vertices.extend([x, y, z + 1, *color, x + 1, y, z + 1, *color, x + 1, y + 1, z + 1, *color])
-                        vertices.extend([x, y, z + 1, *color, x + 1, y + 1, z + 1, *color, x, y + 1, z + 1, *color])
+                    if z_local == chunk.CHUNK_SIZE_Z - 1 or chunk.blocks[x_local, y_local, z_local + 1] == core_world.BlockType.AIR:
+                        v1, v2, v3, v4 = [x_local, y_local, z_local + 1], [x_local + 1, y_local, z_local + 1], [x_local + 1, y_local + 1, z_local + 1], [x_local, y_local + 1, z_local + 1]
+                        # FIX: Reversed winding order to match other faces.
+                        vertices.extend([*v1, *color, *v3, *color, *v2, *color])
+                        vertices.extend([*v1, *color, *v4, *color, *v3, *color])
                     # Back (-Z)
-                    if z == 0 or chunk.blocks[x, y, z - 1] == core_world.BlockType.AIR:
-                        vertices.extend([x, y, z, *color, x, y + 1, z, *color, x + 1, y + 1, z, *color])
-                        vertices.extend([x, y, z, *color, x + 1, y + 1, z, *color, x + 1, y, z, *color])
+                    if z_local == 0 or chunk.blocks[x_local, y_local, z_local - 1] == core_world.BlockType.AIR:
+                        v1, v2, v3, v4 = [x_local, y_local, z_local], [x_local + 1, y_local, z_local], [x_local + 1, y_local + 1, z_local], [x_local, y_local + 1, z_local]
+                        vertices.extend([*v1, *color, *v2, *color, *v3, *color])
+                        vertices.extend([*v1, *color, *v3, *color, *v4, *color])
 
         if coord in self.chunk_meshes:
             self.chunk_meshes[coord].destroy()
@@ -252,7 +265,6 @@ class Renderer:
         """Clears the screen and draws the world."""
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
-        # FIX: Toggle wireframe mode
         if self.wireframe_mode:
             glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
         else:
@@ -272,7 +284,6 @@ class Renderer:
             glUniformMatrix4fv(glGetUniformLocation(self.shader, "model"), 1, GL_FALSE, model_matrix)
             mesh.draw()
 
-        # Reset polygon mode to fill for other rendering (like UI) if any
         if self.wireframe_mode:
             glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
 
