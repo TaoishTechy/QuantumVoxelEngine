@@ -5,20 +5,29 @@ import numpy as np
 from typing import Tuple, List, Dict
 import core_world
 import config
+from ai_systems import NeuralMeshPredictor
+
+# Assume a global instance of the predictor
+neural_mesh_predictor = NeuralMeshPredictor()
 
 def worker_build_mesh(chunk_coord: Tuple[int, int], world: 'core_world.WorldState') -> Tuple[Tuple[int, int], np.ndarray, np.ndarray]:
     """
     (THREAD-SAFE) Constructs the mesh for a single chunk.
-    This function is designed to be run in a separate thread.
+    Now includes a fast path for AI-predicted meshes.
     """
     wx, wz = chunk_coord
     chunk = world.get_or_create_chunk(wx, wz)
-    
+
+    # --- AI Fast Path ---
+    predicted_mesh = neural_mesh_predictor.predict_mesh(chunk.blocks)
+    if predicted_mesh is not None:
+        return chunk_coord, predicted_mesh[0], predicted_mesh[1]
+
+    # --- Full Calculation Path (if AI misses) ---
     vertices = []
     indices = []
     vertex_count = 0
     
-    # TODO: Implement dirty-region sub-section rebuilds (8x8x8 or 4x4x4)
     for x in range(chunk.CHUNK_SIZE_X):
         for y in range(chunk.CHUNK_HEIGHT):
             for z in range(chunk.CHUNK_SIZE_Z):
@@ -32,6 +41,10 @@ def worker_build_mesh(chunk_coord: Tuple[int, int], world: 'core_world.WorldStat
                 # Check neighbors and add faces
                 if world.get_block(world_x, world_y + 1, world_z).type == core_world.BlockType.AIR:
                     v = [(world_x, y + 1, world_z), (world_x + 1, y + 1, world_z), (world_x + 1, y + 1, world_z + 1), (world_x, y + 1, world_z + 1)]
+                    new_verts, new_indices = create_face_data(v, tex_coords, vertex_count)
+                    vertices.extend(new_verts); indices.extend(new_indices); vertex_count += 4
+                if world.get_block(world_x, world_y - 1, world_z).type == core_world.BlockType.AIR:
+                    v = [(world_x, y, world_z), (world_x + 1, y, world_z), (world_x + 1, y, world_z + 1), (world_x, y, world_z + 1)]
                     new_verts, new_indices = create_face_data(v, tex_coords, vertex_count)
                     vertices.extend(new_verts); indices.extend(new_indices); vertex_count += 4
                 # ... (and so on for the other 5 faces, using world coordinates and correct winding)
