@@ -1,43 +1,28 @@
 # config.py
-# Centralized configuration for all game constants and tunables.
+# Centralized, non-user-editable constants for game balance and engine configuration.
+# For user-editable settings, use settings.json.
 
-from typing import Dict, Tuple
+# --- Rendering ---
+RENDER_DISTANCE = 8  # Chunk radius to load and render around the player
 
-# Screen and Rendering
-SCREEN_WIDTH: int = 1280
-SCREEN_HEIGHT: int = 720
-FOV: int = 70
-NEAR_PLANE: float = 0.1
-FAR_PLANE: float = 500.0
-SKY_COLOR: Tuple[float, float, float, float] = (0.5, 0.7, 1.0, 1.0)
+# --- Physics ---
+GRAVITY = -9.81
+TERMINAL_VELOCITY = -50.0
 
-# Performance
-MESH_TIME_BUDGET_MS: float = 4.0
-MAX_MESH_UPLOADS_PER_FRAME: int = 2
-MAX_OUTSTANDING_MESH_TASKS: int = 8
-RENDER_DISTANCE: int = 4 # In chunks
+# --- World Generation ---
+# These could be moved to settings.json if you want to make them user-configurable
+BIOME_SCALE = 0.02
+TERRAIN_BASE_HEIGHT = 64
+HILL_AMPLITUDE = 20
+MOUNTAIN_AMPLITUDE = 40
+FRACTAL_OCTAVES = 6
 
-# Physics
-GRAVITY_MULTIPLIER: float = 1.0
-TERMINAL_VELOCITY: float = -50.0
+# --- Quantum Mechanics ---
+QUANTUM_ENTROPY_THRESHOLD = 5000  # Chunks with entropy below this are compressed on eviction
+QUANTUM_WAVE_FUNCTION_SPREAD = 2.5 # Influences how far the player model predicts movement
+QUANTUM_PERTURBATION_CHANCE = 0.05 # Chance per frame for a quantum object to jitter
+QUANTUM_PERTURBATION_MAGNITUDE = 0.2 # How much a quantum object jitters
 
-# Player
-PLAYER_MOVE_SPEED: float = 5.0
-PLAYER_JUMP_FORCE: float = 5.0
-MOUSE_SENSITIVITY: float = 0.005
-
-# Textures
-TEXTURE_MAP: Dict[int, Tuple[int, int]] = {
-    0: (0, 0), # Stone
-    1: (1, 0), # Wood
-    # 2: (2, 0), # Grass
-    # 3: (3, 0), # Dirt
-}
-DEFAULT_TEXTURE_COORDS: Tuple[int, int] = (3, 0) # Dirt
-
-# Accessibility & UI
-UI_THEME: Dict[str, Tuple[int, int, int]] = {
-    "background": (20, 30, 50),
-    "foreground": (230, 240, 255),
-    "accent": (60, 100, 180)
-}
+# --- World Systems ---
+STORM_PROBABILITY_PER_TICK = 0.0001 # Lowered for more reasonable frequency
+STORM_SUPERPOSITION_DURATION = 45.0 # Seconds the storm can remain in superposition
