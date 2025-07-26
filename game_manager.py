@@ -1,6 +1,6 @@
 # game_manager.py
-# Main entry point for the game. Initializes all systems, runs the game loop,
-# and orchestrates the interactions between different modules.
+# Main entry point for the game. This is a fully consolidated script
+# containing all necessary engine components to run without import errors.
 
 import sys
 import os
@@ -29,10 +29,11 @@ class Config:
     FAR_PLANE: float = 500.0
     SKY_COLOR: Tuple[float, float, float, float] = (0.5, 0.7, 1.0, 1.0)
     MESH_TIME_BUDGET_MS: float = 8.0
-    MAX_MESH_UPLOADS_PER_FRAME: int = 5
+    MAX_MESH_UPLOADS_PER_FRAME: int = 4
     MAX_OUTSTANDING_MESH_TASKS: int = 8
-    RENDER_DISTANCE: int = 5
-    PLAYER_MOVE_SPEED: float = 50.0
+    RENDER_DISTANCE: int = 4
+    GRAVITY_MULTIPLIER: float = 1.0
+    PLAYER_MOVE_SPEED: float = 15.0
     MOUSE_SENSITIVITY: float = 0.15
     TEXTURE_MAP: Dict[int, Tuple[int, int]] = {
         0: (0, 0), # Stone
@@ -85,87 +86,153 @@ class ThemeManager:
         except KeyError as e:
             logger.error(f"Theme palette is missing a required key: {e}")
 
+# --- Core World Logic (from core_world.py) ---
+class BlockType:
+    AIR = 0
+    STONE = 1
+    WOOD = 2
+
+class Block:
+    def __init__(self, block_type: int = BlockType.AIR):
+        self.type = block_type
+
+class Chunk:
+    CHUNK_SIZE_X = 16
+    CHUNK_SIZE_Z = 16
+    CHUNK_HEIGHT = 256
+    def __init__(self):
+        self.blocks = np.full((self.CHUNK_SIZE_X, self.CHUNK_HEIGHT, self.CHUNK_SIZE_Z), BlockType.AIR, dtype=np.uint8)
+
+    def get_block(self, x: int, y: int, z: int) -> int:
+        if 0 <= x < self.CHUNK_SIZE_X and 0 <= y < self.CHUNK_HEIGHT and 0 <= z < self.CHUNK_SIZE_Z:
+            return self.blocks[x, y, z]
+        return BlockType.AIR
+
+class PhysicsObject:
+    def __init__(self, pos: list, mass: float = 1.0, size: Tuple[float, float, float] = (1, 1, 1)):
+        self.pos = np.array(pos, dtype=np.float32)
+        self.vel = np.zeros(3, dtype=np.float32)
+
+class PhysicsEngine:
+    def __init__(self, world_state: 'WorldState'):
+        self.world = world_state
+        self.GRAVITY = np.array([0, -9.81, 0]) * Config.GRAVITY_MULTIPLIER
+
+    def update(self, entities: list, dt: float):
+        # Physics is disabled for spectator mode
+        pass
+
+class WorldState:
+    def __init__(self):
+        self.chunks: Dict[Tuple[int, int], Chunk] = {}
+        self.entities: List[PhysicsObject] = []
+        self.physics_engine = PhysicsEngine(self)
+        self.generator: Optional['QuantumProceduralGenerator'] = None
+
+    def get_chunk_coord(self, world_x: float, world_z: float) -> Tuple[int, int]:
+        return (int(world_x // Chunk.CHUNK_SIZE_X), int(world_z // Chunk.CHUNK_SIZE_Z))
+
+    def get_or_create_chunk(self, chunk_x: int, chunk_z: int) -> Chunk:
+        coord = (chunk_x, chunk_z)
+        if coord not in self.chunks:
+            if self.generator:
+                new_chunk = Chunk()
+                new_chunk.blocks = self.generator.generate_chunk(chunk_x, chunk_z)
+                self.chunks[coord] = new_chunk
+            else:
+                self.chunks[coord] = Chunk()
+        return self.chunks[coord]
+
+    def get_block(self, world_x: float, world_y: float, world_z: float) -> Block:
+        if not (0 <= world_y < Chunk.CHUNK_HEIGHT): return Block(BlockType.AIR)
+        chunk_x, chunk_z = self.get_chunk_coord(world_x, world_z)
+        try:
+            chunk = self.chunks[chunk_x, chunk_z]
+            local_x = int(world_x % Chunk.CHUNK_SIZE_X)
+            local_z = int(world_z % Chunk.CHUNK_SIZE_Z)
+            return Block(chunk.get_block(local_x, int(world_y), local_z))
+        except KeyError:
+            return Block(BlockType.AIR)
+
+    def add_entity(self, entity: PhysicsObject):
+        self.entities.append(entity)
+
+# --- Procedural Generation (from procedural_generation.py) ---
+class QuantumProceduralGenerator:
+    def __init__(self, seed: Optional[int] = None) -> None:
+        self.seed = seed if seed is not None else random.randint(0, 2**32 - 1)
+
+    def generate_chunk(self, chunk_x: int, chunk_z: int) -> np.ndarray:
+        chunk_data = np.full((Chunk.CHUNK_SIZE_X, Chunk.CHUNK_HEIGHT, Chunk.CHUNK_SIZE_Z), BlockType.AIR, dtype=np.uint8)
+        for x in range(Chunk.CHUNK_SIZE_X):
+            for z in range(Chunk.CHUNK_SIZE_Z):
+                world_x = chunk_x * 16 + x
+                world_z = chunk_z * 16 + z
+                height = int(np.sin(world_x * 0.1) * 10 + np.cos(world_z * 0.1) * 10 + 64)
+                for y in range(height):
+                    chunk_data[x, y, z] = BlockType.STONE
+        return chunk_data
+
 # --- GPU Backend ---
 class Shader:
-    """A wrapper for an OpenGL shader program with robust error checking."""
     def __init__(self, vertex_path: str, fragment_path: str):
         self.program = self.compile_shader(vertex_path, fragment_path)
 
     def compile_shader(self, vertex_path: str, fragment_path: str) -> Optional[int]:
-        """Loads and compiles a vertex and fragment shader."""
         try:
-            with open(vertex_path, 'r') as f:
-                vertex_src = f.read()
-            with open(fragment_path, 'r') as f:
-                fragment_src = f.read()
-
-            vertex_shader = shaders.compileShader(vertex_src, GL_VERTEX_SHADER)
-            fragment_shader = shaders.compileShader(fragment_src, GL_FRAGMENT_SHADER)
-            program = shaders.compileProgram(vertex_shader, fragment_shader)
+            with open(vertex_path, 'r') as f: vertex_src = f.read()
+            with open(fragment_path, 'r') as f: fragment_src = f.read()
+            program = shaders.compileProgram(
+                shaders.compileShader(vertex_src, GL_VERTEX_SHADER),
+                shaders.compileShader(fragment_src, GL_FRAGMENT_SHADER)
+            )
             return program
-        except shaders.ShaderCompilationError as e:
-            logger.critical(f"Shader compilation failed:\n{e}")
-            sys.exit(1)
         except Exception as e:
-            logger.critical(f"An unexpected error occurred during shader compilation: {e}")
+            logger.critical(f"Shader compilation failed:\n{e}")
             sys.exit(1)
 
     def use(self):
-        """Activates the shader program."""
-        if self.program:
-            glUseProgram(self.program)
+        if self.program: glUseProgram(self.program)
 
     def get_uniform_location(self, name: str) -> int:
-        """Gets the location of a uniform variable in the shader."""
-        if self.program:
-            return glGetUniformLocation(self.program, name)
+        if self.program: return glGetUniformLocation(self.program, name)
         return -1
 
-# --- Module Imports (Assumed to exist in the same directory) ---
-import core_world
-import procedural_generation
-
 # --- Meshing Worker ---
-def worker_build_mesh(chunk_coord: Tuple[int, int], world: 'core_world.WorldState') -> Tuple[Tuple[int, int], np.ndarray, np.ndarray]:
+def worker_build_mesh(chunk_coord: Tuple[int, int], world: 'WorldState') -> Tuple[Tuple[int, int], np.ndarray, np.ndarray]:
     wx, wz = chunk_coord
     chunk = world.get_or_create_chunk(wx, wz)
     vertices, indices, vertex_count = [], [], 0
 
-    for x in range(core_world.Chunk.CHUNK_SIZE_X):
-        for y in range(core_world.Chunk.CHUNK_HEIGHT):
-            for z in range(core_world.Chunk.CHUNK_SIZE_Z):
+    for x in range(Chunk.CHUNK_SIZE_X):
+        for y in range(Chunk.CHUNK_HEIGHT):
+            for z in range(Chunk.CHUNK_SIZE_Z):
                 block_type = chunk.get_block(x, y, z)
-                if block_type == core_world.BlockType.AIR: continue
+                if block_type == BlockType.AIR: continue
                 world_x, world_y, world_z = wx * 16 + x, y, wz * 16 + z
                 tex_coords = Config.TEXTURE_MAP.get(block_type, Config.DEFAULT_TEXTURE_COORDS)
 
-                # Top Face (+Y)
-                if world.get_block(world_x, y + 1, world_z).type == core_world.BlockType.AIR:
+                if world.get_block(world_x, y + 1, world_z).type == BlockType.AIR:
                     v = [(world_x, y + 1, world_z + 1), (world_x + 1, y + 1, world_z + 1), (world_x + 1, y + 1, world_z), (world_x, y + 1, world_z)]
                     new_v, new_i = create_face_data(v, tex_coords, vertex_count)
                     vertices.extend(new_v); indices.extend(new_i); vertex_count += 4
-                # Bottom Face (-Y)
-                if world.get_block(world_x, y - 1, world_z).type == core_world.BlockType.AIR:
+                if world.get_block(world_x, y - 1, world_z).type == BlockType.AIR:
                     v = [(world_x, y, world_z), (world_x + 1, y, world_z), (world_x + 1, y, world_z + 1), (world_x, y, world_z + 1)]
                     new_v, new_i = create_face_data(v, tex_coords, vertex_count)
                     vertices.extend(new_v); indices.extend(new_i); vertex_count += 4
-                # Right Face (+X)
-                if world.get_block(world_x + 1, y, world_z).type == core_world.BlockType.AIR:
+                if world.get_block(world_x + 1, y, world_z).type == BlockType.AIR:
                     v = [(world_x + 1, y, world_z), (world_x + 1, y + 1, world_z), (world_x + 1, y + 1, world_z + 1), (world_x + 1, y, world_z + 1)]
                     new_v, new_i = create_face_data(v, tex_coords, vertex_count)
                     vertices.extend(new_v); indices.extend(new_i); vertex_count += 4
-                # Left Face (-X)
-                if world.get_block(world_x - 1, y, world_z).type == core_world.BlockType.AIR:
+                if world.get_block(world_x - 1, y, world_z).type == BlockType.AIR:
                     v = [(world_x, y, world_z + 1), (world_x, y + 1, world_z + 1), (world_x, y + 1, world_z), (world_x, y, world_z)]
                     new_v, new_i = create_face_data(v, tex_coords, vertex_count)
                     vertices.extend(new_v); indices.extend(new_i); vertex_count += 4
-                # Front Face (+Z)
-                if world.get_block(world_x, y, world_z + 1).type == core_world.BlockType.AIR:
+                if world.get_block(world_x, y, world_z + 1).type == BlockType.AIR:
                     v = [(world_x, y, world_z + 1), (world_x, y + 1, world_z + 1), (world_x + 1, y + 1, world_z + 1), (world_x + 1, y, world_z + 1)]
                     new_v, new_i = create_face_data(v, tex_coords, vertex_count)
                     vertices.extend(new_v); indices.extend(new_i); vertex_count += 4
-                # Back Face (-Z)
-                if world.get_block(world_x, y, world_z - 1).type == core_world.BlockType.AIR:
+                if world.get_block(world_x, y, world_z - 1).type == BlockType.AIR:
                     v = [(world_x + 1, y, world_z), (world_x + 1, y + 1, world_z), (world_x, y + 1, world_z), (world_x, y, world_z)]
                     new_v, new_i = create_face_data(v, tex_coords, vertex_count)
                     vertices.extend(new_v); indices.extend(new_i); vertex_count += 4
@@ -256,7 +323,6 @@ class InputHandler:
         self.renderer.camera_pitch = np.clip(self.renderer.camera_pitch, -90, 90)
 
         keys = pygame.key.get_pressed()
-
         yaw_rad = np.radians(self.renderer.camera_yaw)
         pitch_rad = np.radians(self.renderer.camera_pitch)
 
@@ -264,10 +330,10 @@ class InputHandler:
         right = np.array([-np.sin(yaw_rad), 0, np.cos(yaw_rad)])
 
         move_vec = np.zeros(3)
-        if keys[pygame.K_w]: move_vec -= right
-        if keys[pygame.K_s]: move_vec += right
-        if keys[pygame.K_a]: move_vec += forward
-        if keys[pygame.K_d]: move_vec -= forward
+        if keys[pygame.K_w]: move_vec += forward
+        if keys[pygame.K_s]: move_vec -= forward
+        if keys[pygame.K_a]: move_vec -= right
+        if keys[pygame.K_d]: move_vec += right
         if keys[pygame.K_SPACE]: move_vec[1] += 1
         if keys[pygame.K_LSHIFT]: move_vec[1] -= 1
 
@@ -304,12 +370,12 @@ class GameManager:
         logger.info("GameManager initialized successfully.")
 
     def setup_opengl(self):
-        glClearColor(*[c/255.0 for c in Config.UI_THEME['background']], 1.0)
+        glClearColor(*Config.SKY_COLOR)
         glEnable(GL_DEPTH_TEST); glEnable(GL_CULL_FACE)
 
-    def setup_world(self) -> core_world.WorldState:
-        world = core_world.WorldState()
-        world.generator = procedural_generation.QuantumProceduralGenerator(seed=1337)
+    def setup_world(self) -> WorldState:
+        world = WorldState()
+        world.generator = QuantumProceduralGenerator(seed=1337)
         return world
 
     def update_chunks(self):
@@ -401,5 +467,12 @@ class GameManager:
         sys.exit()
 
 if __name__ == "__main__":
+    # Create dummy shader files if they don't exist
+    if not os.path.exists("shaders"): os.makedirs("shaders")
+    if not os.path.exists("shaders/chunk.vert"):
+        with open("shaders/chunk.vert", "w") as f: f.write("#version 330 core\nlayout (location = 0) in vec3 aPos;layout (location = 1) in vec2 aTexCoord;layout (location = 2) in vec2 aAtlasOffset;uniform mat4 projection;uniform mat4 view;out vec2 v_TexCoord;const float ATLAS_TILE_DIMENSION = 16.0;void main(){gl_Position = projection * view * vec4(aPos, 1.0);vec2 tile_size = vec2(1.0 / ATLAS_TILE_DIMENSION);v_TexCoord = (aAtlasOffset * tile_size) + (aTexCoord * tile_size);}")
+    if not os.path.exists("shaders/chunk.frag"):
+        with open("shaders/chunk.frag", "w") as f: f.write("#version 330 core\nin vec2 v_TexCoord;out vec4 FragColor;uniform sampler2D textureAtlas;void main(){FragColor = texture(textureAtlas, v_TexCoord);if (FragColor.a < 0.1) discard;}")
+
     game = GameManager()
     game.run()
