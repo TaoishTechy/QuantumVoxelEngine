@@ -33,7 +33,7 @@ class Config:
     MAX_OUTSTANDING_MESH_TASKS: int = 8
     RENDER_DISTANCE: int = 4
     GRAVITY_MULTIPLIER: float = 1.0
-    PLAYER_MOVE_SPEED: float = 15.0
+    PLAYER_MOVE_SPEED: float = 50.0
     MOUSE_SENSITIVITY: float = 0.15
     TEXTURE_MAP: Dict[int, Tuple[int, int]] = {
         0: (0, 0), # Stone
@@ -330,10 +330,10 @@ class InputHandler:
         right = np.array([-np.sin(yaw_rad), 0, np.cos(yaw_rad)])
 
         move_vec = np.zeros(3)
-        if keys[pygame.K_w]: move_vec += forward
-        if keys[pygame.K_s]: move_vec -= forward
-        if keys[pygame.K_a]: move_vec -= right
-        if keys[pygame.K_d]: move_vec += right
+        if keys[pygame.K_w]: move_vec -= right
+        if keys[pygame.K_s]: move_vec += right
+        if keys[pygame.K_a]: move_vec += forward
+        if keys[pygame.K_d]: move_vec -= forward
         if keys[pygame.K_SPACE]: move_vec[1] += 1
         if keys[pygame.K_LSHIFT]: move_vec[1] -= 1
 
