@@ -18,6 +18,17 @@ class BlockType:
     WOOD = 4
     WATER = 5
     QUANTUM_ORE = 6
+    LAVA = 7
+    OBSIDIAN = 8
+    SAND = 9
+    # --- New Block Types ---
+    LEAVES = 10
+    BRICK = 11
+    METAL = 12
+    ICE = 13
+    GLOWSTONE = 14
+    SANDSTONE = 15
+
 
 class Material:
     """Defines physical properties for materials."""
@@ -135,7 +146,7 @@ class WorldState:
     def get_block_type(self, world_x: float, world_y: float, world_z: float) -> int:
         """
         Gets a block's type ID at absolute world coordinates.
-        FIX: This is the high-performance version that returns an integer, not a Block object.
+        This is the high-performance version that returns an integer, not a Block object.
         """
         chunk_x, chunk_z = self.get_chunk_coord(world_x, world_z)
         # No need to create a chunk just to check a block, assume AIR if it doesn't exist.
@@ -162,13 +173,12 @@ class WorldState:
         """Adds a new entity to the world."""
         self.entities.append(entity)
 
-    def step_simulation(self, dt: float):
+    def step_simulation(self, dt: float, current_time: float):
         """Advances the entire world state by one time step."""
         self.physics_engine.update(dt)
 
 class PhysicsEngine:
     """Handles all physics calculations for the world."""
-    # FIX: Physics constants are now sourced from the config file.
     GRAVITY = np.array([0, config.GRAVITY, 0])
     TERMINAL_VELOCITY = config.TERMINAL_VELOCITY
 
@@ -181,8 +191,6 @@ class PhysicsEngine:
             self.apply_gravity(entity)
             self.update_entity_position(entity, dt)
             self.handle_collisions(entity)
-            if isinstance(entity, QuantumObject) and not entity.is_observed:
-                self.apply_quantum_effects(entity, dt)
 
     def apply_gravity(self, entity: PhysicsObject):
         """Applies gravity to a single entity."""
@@ -210,7 +218,6 @@ class PhysicsEngine:
         for x in range(min_ix, max_ix + 1):
             for y in range(min_iy, max_iy + 1):
                 for z in range(min_iz, max_iz + 1):
-                    # FIX: Use the high-performance get_block_type method
                     block_type = self.world.get_block_type(x, y, z)
                     if block_type != BlockType.AIR:
                         self.resolve_collision(entity, (x, y, z))
@@ -236,22 +243,13 @@ class PhysicsEngine:
             entity.pos[0] += direction * overlap_x
             entity.vel[0] = 0
         elif min_axis == 1: # Y-axis collision
-            # FIX: Correct on_ground logic.
             was_falling = entity.vel[1] <= 0
             direction = np.sign(entity.pos[1] - (block_pos[1] + 0.5))
             entity.pos[1] += direction * overlap_y
             entity.vel[1] = 0
-            # Only set on_ground if we were falling and got pushed up.
             if was_falling and direction > 0:
                 entity.on_ground = True
         elif min_axis == 2: # Z-axis collision
             direction = np.sign(entity.pos[2] - (block_pos[2] + 0.5))
             entity.pos[2] += direction * overlap_z
             entity.vel[2] = 0
-
-    def apply_quantum_effects(self, entity: QuantumObject, dt: float):
-        """Simulates quantum behavior for an unobserved quantum object."""
-        # Use a more controlled random perturbation
-        if random.random() < config.QUANTUM_PERTURBATION_CHANCE:
-             perturbation = (np.random.rand(3) - 0.5) * config.QUANTUM_PERTURBATION_MAGNITUDE
-             entity.pos += perturbation
