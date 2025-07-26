@@ -1,7 +1,7 @@
 # config.py
 # Centralized configuration for all game constants and tunables.
 
-from typing import Dict, Any
+from typing import Dict, Tuple
 
 # Screen and Rendering
 SCREEN_WIDTH: int = 1280
