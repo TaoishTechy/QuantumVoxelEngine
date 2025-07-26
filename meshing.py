@@ -3,58 +3,68 @@
 
 import numpy as np
 from typing import Tuple, List, Dict
-import core_world
-import config
-from ai_systems import NeuralMeshPredictor
 
-# Assume a global instance of the predictor
-neural_mesh_predictor = NeuralMeshPredictor()
+# --- Module Imports (Assumed to exist) ---
+import core_world
+from config import Config
 
 def worker_build_mesh(chunk_coord: Tuple[int, int], world: 'core_world.WorldState') -> Tuple[Tuple[int, int], np.ndarray, np.ndarray]:
     """
     (THREAD-SAFE) Constructs the mesh for a single chunk.
-    Now includes a fast path for AI-predicted meshes.
+    This function is designed to be run in a separate thread.
     """
     wx, wz = chunk_coord
     chunk = world.get_or_create_chunk(wx, wz)
-
-    # --- AI Fast Path ---
-    predicted_mesh = neural_mesh_predictor.predict_mesh(chunk.blocks)
-    if predicted_mesh is not None:
-        return chunk_coord, predicted_mesh[0], predicted_mesh[1]
-
-    # --- Full Calculation Path (if AI misses) ---
-    vertices = []
-    indices = []
-    vertex_count = 0
+    vertices, indices, vertex_count = [], [], 0
     
-    for x in range(chunk.CHUNK_SIZE_X):
-        for y in range(chunk.CHUNK_HEIGHT):
-            for z in range(chunk.CHUNK_SIZE_Z):
+    for x in range(core_world.Chunk.CHUNK_SIZE_X):
+        for y in range(core_world.Chunk.CHUNK_HEIGHT):
+            for z in range(core_world.Chunk.CHUNK_SIZE_Z):
                 block_type = chunk.get_block(x, y, z)
                 if block_type == core_world.BlockType.AIR: continue
-
-                world_x, world_y, world_z = wx * chunk.CHUNK_SIZE_X + x, y, wz * chunk.CHUNK_SIZE_Z + z
                 
-                tex_coords = config.TEXTURE_MAP.get(block_type, config.DEFAULT_TEXTURE_COORDS)
+                world_x, world_y, world_z = wx * 16 + x, y, wz * 16 + z
+                tex_coords = Config.TEXTURE_MAP.get(block_type, Config.DEFAULT_TEXTURE_COORDS)
                 
                 # Check neighbors and add faces
-                if world.get_block(world_x, world_y + 1, world_z).type == core_world.BlockType.AIR:
-                    v = [(world_x, y + 1, world_z), (world_x + 1, y + 1, world_z), (world_x + 1, y + 1, world_z + 1), (world_x, y + 1, world_z + 1)]
-                    new_verts, new_indices = create_face_data(v, tex_coords, vertex_count)
-                    vertices.extend(new_verts); indices.extend(new_indices); vertex_count += 4
-                if world.get_block(world_x, world_y - 1, world_z).type == core_world.BlockType.AIR:
+                # Top Face (+Y)
+                if world.get_block(world_x, y + 1, world_z).type == core_world.BlockType.AIR:
+                    v = [(world_x, y + 1, world_z + 1), (world_x + 1, y + 1, world_z + 1), (world_x + 1, y + 1, world_z), (world_x, y + 1, world_z)]
+                    new_v, new_i = create_face_data(v, tex_coords, vertex_count)
+                    vertices.extend(new_v); indices.extend(new_i); vertex_count += 4
+                # Bottom Face (-Y)
+                if world.get_block(world_x, y - 1, world_z).type == core_world.BlockType.AIR:
                     v = [(world_x, y, world_z), (world_x + 1, y, world_z), (world_x + 1, y, world_z + 1), (world_x, y, world_z + 1)]
-                    new_verts, new_indices = create_face_data(v, tex_coords, vertex_count)
-                    vertices.extend(new_verts); indices.extend(new_indices); vertex_count += 4
-                # ... (and so on for the other 5 faces, using world coordinates and correct winding)
+                    new_v, new_i = create_face_data(v, tex_coords, vertex_count)
+                    vertices.extend(new_v); indices.extend(new_i); vertex_count += 4
+                # Right Face (+X)
+                if world.get_block(world_x + 1, y, world_z).type == core_world.BlockType.AIR:
+                    v = [(world_x + 1, y, world_z + 1), (world_x + 1, y + 1, world_z + 1), (world_x + 1, y + 1, world_z), (world_x + 1, y, world_z)]
+                    new_v, new_i = create_face_data(v, tex_coords, vertex_count)
+                    vertices.extend(new_v); indices.extend(new_i); vertex_count += 4
+                # Left Face (-X)
+                if world.get_block(world_x - 1, y, world_z).type == core_world.BlockType.AIR:
+                    v = [(world_x, y, world_z), (world_x, y + 1, world_z), (world_x, y + 1, world_z + 1), (world_x, y, world_z + 1)]
+                    new_v, new_i = create_face_data(v, tex_coords, vertex_count)
+                    vertices.extend(new_v); indices.extend(new_i); vertex_count += 4
+                # Front Face (+Z)
+                if world.get_block(world_x, y, world_z + 1).type == core_world.BlockType.AIR:
+                    v = [(world_x, y, world_z + 1), (world_x, y + 1, world_z + 1), (world_x + 1, y + 1, world_z + 1), (world_x + 1, y, world_z + 1)]
+                    new_v, new_i = create_face_data(v, tex_coords, vertex_count)
+                    vertices.extend(new_v); indices.extend(new_i); vertex_count += 4
+                # Back Face (-Z)
+                if world.get_block(world_x, y, world_z - 1).type == core_world.BlockType.AIR:
+                    v = [(world_x + 1, y, world_z), (world_x + 1, y + 1, world_z), (world_x, y + 1, world_z), (world_x, y, world_z)]
+                    new_v, new_i = create_face_data(v, tex_coords, vertex_count)
+                    vertices.extend(new_v); indices.extend(new_i); vertex_count += 4
 
     return chunk_coord, np.array(vertices, dtype=np.float32), np.array(indices, dtype=np.uint32)
 
-def create_face_data(verts: List[Tuple[float, float, float]], tex_coords: Tuple[int, int], 
-                     start_index: int) -> Tuple[List[float], List[int]]:
+def create_face_data(verts: List[Tuple[float, float, float]], tex_coords: Tuple[int, int], start_index: int) -> Tuple[List[float], List[int]]:
     """Creates vertex and index data for a single quad face."""
-    uvs = [(0, 0), (1, 0), (1, 1), (0, 1)]
+    uvs = [(0, 1), (1, 1), (1, 0), (0, 0)]
+    # Vertex format: [x, y, z, u, v, atlas_x, atlas_y]
     vertex_data = [(*verts[i], *uvs[i], *tex_coords) for i in range(4)]
-    index_data = [start_index, start_index + 1, start_index + 2, start_index + 2, start_index + 3, start_index]
+    # Indices for two triangles forming a quad
+    index_data = [start_index, start_index + 1, start_index + 2, start_index, start_index + 2, start_index + 3]
     return vertex_data, index_data
