@@ -1,0 +1,61 @@
+#version 430 core
+
+// Define the local workgroup size. 4x4x4 = 64 threads per group.
+layout (local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
+
+// --- Buffers and Textures ---
+// Input: 3D texture containing the voxel data for the chunk
+layout (r32ui, binding = 0) uniform uimage3D voxelData;
+
+// Output: Shader Storage Buffer Objects (SSBOs) for the generated mesh
+layout (std430, binding = 1) buffer VertexBuffer {
+    float vertices[];
+};
+layout (std430, binding = 2) buffer IndexBuffer {
+    uint indices[];
+};
+layout (std430, binding = 3) buffer AtomicCounters {
+    uint vertexCount;
+    uint indexCount;
+};
+
+// --- Main Compute Shader ---
+void main() {
+    // Get the global invocation ID for this thread
+    ivec3 gid = ivec3(gl_GlobalInvocationID);
+
+    // TODO: This is a placeholder for a full binary greedy meshing algorithm.
+    // A production implementation would involve multiple passes:
+    // 1. Mask Generation: Create bitmasks for each slice of the chunk.
+    // 2. Greedy Merging: Use parallel reduction and bitwise operations on the masks
+    //    to find the largest possible quads.
+    // 3. Vertex Generation: Write the vertices for the merged quads to the SSBO.
+
+    // Simplified Example: Generate a single quad for every solid block
+    uint blockType = imageLoad(voxelData, gid).r;
+
+    if (blockType > 0) {
+        // Use atomic counters to get a unique index for our vertices/indices
+        uint v_idx = atomicAdd(vertexCount, 4);
+        uint i_idx = atomicAdd(indexCount, 6);
+
+        // Simple face vertices (top face)
+        vec3 v0 = vec3(gid.x, gid.y + 1, gid.z);
+        vec3 v1 = vec3(gid.x + 1, gid.y + 1, gid.z);
+        vec3 v2 = vec3(gid.x + 1, gid.y + 1, gid.z + 1);
+        vec3 v3 = vec3(gid.x, gid.y + 1, gid.z + 1);
+
+        // Write vertex data (pos, uv, atlas_offset)
+        // This is highly unoptimized and just for demonstration
+        vertices[v_idx * 7 + 0] = v0.x; vertices[v_idx * 7 + 1] = v0.y; vertices[v_idx * 7 + 2] = v0.z;
+        // ... and so on for all 4 vertices and their attributes ...
+
+        // Write index data
+        indices[i_idx + 0] = v_idx;
+        indices[i_idx + 1] = v_idx + 1;
+        indices[i_idx + 2] = v_idx + 2;
+        indices[i_idx + 3] = v_idx;
+        indices[i_idx + 4] = v_idx + 2;
+        indices[i_idx + 5] = v_idx + 3;
+    }
+}
